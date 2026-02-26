@@ -15,7 +15,6 @@ class bot(discord.Client):
         if message.author == self.user: # THIS WILL PREVENT REPLAYING TO SELF MESSAGE LOOP
             return ...
         
-        user_id = message.author.id
         
         if message.content.startswith("Hello"): #IF USER MESSAGE START WITH HELLO 
             await message.channel.send(f'Hello,Big boi {message.author} Its PyKnight! ') #IT WILL PRINT Hello,Big boi {USERNAME} Its PyKnight!
@@ -23,6 +22,8 @@ class bot(discord.Client):
             await message.channel.send(f'stfu you jerk') # THIS WILL PRINT stfu you jerk
         elif message.content == message.content.upper(): # IT WILL TAKE THE USER-INPUT AND MAKE IT UPERCASE AND COMPARE
             await message.channel.send("STOP SCREAMING :triumph: ") #IF USER-INPUT AND UPPER MATCH 
+
+        elif len(message.content.split()) > 30:
             await message.reply("I ain't reading all that 💀") #IT WILL PRINT STOP SCREAMING
         
 
