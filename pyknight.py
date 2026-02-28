@@ -9,7 +9,7 @@ load_dotenv(dotenv_path)
 
 class bot(discord.Client):
     async def on_ready(self):
-        self.bot = Groq(api_key=os.getenv("XAI_API_KEY"))
+        self.bot = Groq(api_key=os.getenv("API_KEY"))
 
 
         self.SYSTEM_PROMPT = """
@@ -57,7 +57,7 @@ class bot(discord.Client):
     async def on_message(self, message):
         print(f'Message from {message.author}: {message.content}')
         if message.author == self.user: # THIS WILL PREVENT REPLAYING TO SELF MESSAGE LOOP
-            return ...
+            return
         
         
         if message.content.startswith("Hello"): #IF USER MESSAGE START WITH HELLO 
@@ -86,7 +86,7 @@ class bot(discord.Client):
         elif "!ask Will I pass my math exam?" in message.content.lower():
             Ball_ans = ["Yes", "No", "Maybe", "Definitely."]
             ball_reply = random.choice(Ball_ans)
-            await message.channnel.send(ball_reply)
+            await message.channel.send(ball_reply)
 
         
         elif self.user.mention in  message.content:
