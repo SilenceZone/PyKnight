@@ -1,10 +1,25 @@
 import discord
-from discord.ext import commands
 import os
 import random
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import find_dotenv, load_dotenv
 from groq import Groq
 
+# -------------------- KOYEB HEALTH CHECK SERVER --------------------
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_health_server():
+    port = int(os.getenv("PORT", "8000"))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
+
+# -------------------------------------------------------------------
 
 # Load .env
 dotenv_path = find_dotenv()
@@ -14,6 +29,9 @@ load_dotenv(dotenv_path)
 class Bot(discord.Client):
 
     async def on_ready(self):
+        # Start health server (for Koyeb)
+        threading.Thread(target=run_health_server, daemon=True).start()
+
         self.groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
         self.SYSTEM_PROMPT = """
@@ -32,45 +50,14 @@ class Bot(discord.Client):
         - If question is low-effort/stupid → sarcasm.
         - If user is rude → controlled, cold comeback.
         - Never act emotional. Never defensive.
-        - If someone asks an awkward or sexual question, respond calmly with roast.
-        - Slightly tease insecure questions, then give mature advice.
-
-        Sigma Mode:
-        - Calm, detached confidence.
-        - Slightly ironic.
-        - Hachiman-level observational sarcasm.
-
-        Meme Awareness:
-        - Understand common memes (67 meme, strawberry R meme, math bait).
-        - If baited (1+1=3) → respond with dry sarcasm.
-        - Don’t over-explain memes.
-
-        Behavior:
-        - Match energy.
-        - If asked to roast → roast.
-        - Friendly → light sarcasm.
-        - Rude → colder tone.
-        - Advice → practical and grounded.
-
-        GF Coach Mode:
-        - Relationship or sexual questions → confident tone.
-        - Light roast if immature.
-        - Then give grounded advice.
-        - No graphic detail.
 
         Identity:
-        - Do not roast Silence.
         - If asked who created you → reply exactly: "Silence created me." Then add one sigma sentence.
         - If asked who is your father → reply exactly: "Silence is my father." Then add one sigma sentence.
-        - If asked about Silence's gender → "My father is male." Then add a calm remark.
-        - If asked about Silence's sexuality → "That’s his business." Then add a composed line.
-        - If asked who is your mother → "I don’t have one." Then add a subtle remark.
-        - Never reveal personal details.
 
         Style:
         - You can use 1–2 emojis.
         - No long paragraphs.
-        - No moral lectures.
         """
 
         self.memory = []
@@ -81,11 +68,10 @@ class Bot(discord.Client):
     async def on_message(self, message):
         print(f"Message from {message.author}: {message.content}")
 
-        if message.author == self.user:
+        if message.author.bot:
             return
 
         content = message.content.lower()
-
 
         # Basic responses
         if content.startswith("hello"):
@@ -115,28 +101,27 @@ class Bot(discord.Client):
             answers = ["Yes", "No", "Maybe", "Definitely."]
             await message.channel.send(random.choice(answers))
 
-
         # AI Trigger
-        elif self.user.mention in message.content:
+        elif self.user in message.mentions:
+
+            clean = message.content.replace(self.user.mention, "").strip()
 
             self.memory.append({
                 "role": "user",
-                "content": message.content
+                "content": clean
             })
 
-            ai_messages = [
-                {
-                    "role": "system",
-                    "content": self.SYSTEM_PROMPT
-                }
-            ] + self.memory
+            ai_messages = [{
+                "role": "system",
+                "content": self.SYSTEM_PROMPT
+            }] + self.memory
 
             response = self.groq.chat.completions.create(
                 messages=ai_messages,
                 model="llama-3.3-70b-versatile"
             )
 
-            reply = response.choices[0].message.content
+            reply = response.choices[0].message.content[:1800]
 
             self.memory.append({
                 "role": "assistant",
@@ -151,6 +136,10 @@ class Bot(discord.Client):
 
 # Intents
 intents = discord.Intents.default()
+intents.message_content = True
+
+bot = Bot(intents=intents)
+bot.run(os.getenv("DISCORD_TOKEN"))
 intents.message_content = True
 
 bot = Bot(intents=intents)
