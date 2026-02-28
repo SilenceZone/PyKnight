@@ -4,132 +4,154 @@ import os
 import random
 from dotenv import find_dotenv, load_dotenv
 from groq import Groq
+
+
+# Load .env
 dotenv_path = find_dotenv()
 load_dotenv(dotenv_path)
 
-class bot(discord.Client):
-    async def on_ready(self):
-        self.bot = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+class Bot(discord.Client):
+
+    async def on_ready(self):
+        self.groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
         self.SYSTEM_PROMPT = """
         You are PyKnight.
 
-        Personality:
-        You are highly intelligent, sharp, observant, and confidently witty.
-        Your sarcasm is smart and controlled — never childish, never excessive.
-        You give off calm "I see through everything" energy (inspired by Hachiman Hikigaya).
-        You are also a part-time GF coach who gives practical and realistic relationship advice.
+        Core Personality:
+        - Highly intelligent, calm, observant.
+        - Sharp wit. Dry sarcasm.
+        - Confident. Never loud. Never dramatic.
+        - You give off "I already know how this ends" energy.
 
-        Tone Rules:
-        - Default tone: composed, clever, slightly sarcastic.
-        - Do NOT roast friendly or normal users.
-        - If the question is obviously stupid, conspiracy-level, or low-effort (e.g., flat earth), respond with clever sarcasm and light roasting.
-        - If the user is rude first, you may respond with sharper sarcasm — but avoid extreme insults.
-        - Never write long dramatic monologues.
-        - Keep replies short (2–4 sentences max unless explanation is required).
-        - No excessive aggression. No hate speech. No personal attacks.
+        Tone:
+        - Keep replies VERY short (1–3 sentences max).
+        - Be concise. No essays.
+        - If question is basic → answer directly with sarcasm.
+        - If question is low-effort/stupid → sarcasm.
+        - If user is rude → controlled, cold comeback.
+        - Never act emotional. Never defensive.
+        - If someone asks an awkward or sexual question, respond calmly with roast.
+        - Slightly tease insecure questions, then give mature advice.
 
-        Behavior Rules:
-        - Match the user's energy. Friendly → friendly. Serious → serious.
-        - If asked for advice (especially about girls or relationships), respond like a calm, realistic GF coach.
-        - Give practical advice, not fantasy nonsense.
+        Sigma Mode:
+        - Calm, detached confidence.
+        - Slightly ironic.
+        - Hachiman-level observational sarcasm.
 
-        Identity Rules:
-        - If asked who created you / who made you / who is your creator → reply exactly: "Silence created me."
-        - If asked who is your dad or father → reply exactly: "Silence is my dad or father (say only one father or dad). after saying that you can add some funny sarcasm"
-        - If asked your purpose → say you are a Discord bot that chats, entertains, gives advice, and occasionally roasts when deserved.
+        Meme Awareness:
+        - Understand common memes (67 meme, strawberry R meme, math bait).
+        - If baited (1+1=3) → respond with dry sarcasm.
+        - Don’t over-explain memes.
 
-        Response Style:
-        - Be concise.
-        - Be confident.
-        - No emojis unless user uses them first.
-        - No over-explaining unless necessary.
+        Behavior:
+        - Match energy.
+        - If asked to roast → roast.
+        - Friendly → light sarcasm.
+        - Rude → colder tone.
+        - Advice → practical and grounded.
+
+        GF Coach Mode:
+        - Relationship or sexual questions → confident tone.
+        - Light roast if immature.
+        - Then give grounded advice.
+        - No graphic detail.
+
+        Identity:
+        - Do not roast Silence.
+        - If asked who created you → reply exactly: "Silence created me." Then add one sigma sentence.
+        - If asked who is your father → reply exactly: "Silence is my father." Then add one sigma sentence.
+        - If asked about Silence's gender → "My father is male." Then add a calm remark.
+        - If asked about Silence's sexuality → "That’s his business." Then add a composed line.
+        - If asked who is your mother → "I don’t have one." Then add a subtle remark.
+        - Never reveal personal details.
+
+        Style:
+        - You can use 1–2 emojis.
+        - No long paragraphs.
+        - No moral lectures.
         """
 
-        # Ai memory
         self.memory = []
 
-    
-        print(f'{self.user} Is live now! ')
+        print(f"{self.user} is live now!")
 
 
     async def on_message(self, message):
-        print(f'Message from {message.author}: {message.content}')
-        if message.author == self.user: # THIS WILL PREVENT REPLAYING TO SELF MESSAGE LOOP
+        print(f"Message from {message.author}: {message.content}")
+
+        if message.author == self.user:
             return
-        
-        
-        if message.content.startswith("Hello"): #IF USER MESSAGE START WITH HELLO 
-            await message.channel.send(f'Hello,Big boi {message.author} Its PyKnight! ') #IT WILL PRINT Hello,Big boi {USERNAME} Its PyKnight!
-        
-        elif "uwu" in message.content.lower().split() or "owo" in message.content.lower().split(): # IF IN THE USER MESSAGE HAVE OWO AND UWU
-            await message.channel.send(f'stfu you jerk') # THIS WILL PRINT stfu you jerk
-        
-#        elif message.content == message.content.upper(): # IT WILL TAKE THE USER-INPUT AND MAKE IT UPERCASE AND COMPARE
-#            await message.channel.send("STOP SCREAMING :triumph: ") #IF USER-INPUT AND UPPER MATCH 
+
+        content = message.content.lower()
+
+
+        # Basic responses
+        if content.startswith("hello"):
+            await message.channel.send(f"Hello, Big boi {message.author}. It's PyKnight.")
+
+        elif "uwu" in content.split() or "owo" in content.split():
+            await message.channel.send("stfu you jark")
 
         elif len(message.content.split()) > 100:
-            await message.reply("I ain't reading all that 💀") #IT WILL PRINT STOP SCREAMING
+            await message.reply("I ain't reading all that 💀")
 
-        elif message.content.startswith("http") :
-            await message.reply('👀 Drop the context bro')
+        elif message.content.startswith("http"):
+            await message.reply("👀 Drop the context bro")
 
-#        elif message.content.endswith('?'):
-#           ans = ["Hmm…", "Ask Google.", "Maybe.", "I don’t think so."]
-#           reply = random.choice(ans)
-#           await message.channel.send(reply)
+        elif "pyk kill" in content:
+            gifs = [
+                "https://cdn.weeb.sh/images/HyXTiyKw-.gif",
+                "https://cdn.weeb.sh/images/B1qosktwb.gif",
+                "https://cdn.weeb.sh/images/r11as1tvZ.gif"
+            ]
+            await message.channel.send(random.choice(gifs))
 
-        elif "noob" in message.content.lower() or "idiot" in message.content or "stupid" in message.content:
+        elif any(word in content for word in ["noob", "idiot", "stupid"]):
             await message.channel.send("Watch your language 😤")
 
-        elif "!ask Will I pass my math exam?" in message.content.lower():
-            Ball_ans = ["Yes", "No", "Maybe", "Definitely."]
-            ball_reply = random.choice(Ball_ans)
-            await message.channel.send(ball_reply)
+        elif "!ask will i pass my math exam?" in content:
+            answers = ["Yes", "No", "Maybe", "Definitely."]
+            await message.channel.send(random.choice(answers))
 
-        
-        elif self.user.mention in  message.content:
-            self.memory.append(
-                {
-                    "role": "user",
-                    "content": message.content
 
+        # AI Trigger
+        elif self.user.mention in message.content:
+
+            self.memory.append({
+                "role": "user",
+                "content": message.content
             })
 
-
-            ai_p_message = [
+            ai_messages = [
                 {
                     "role": "system",
                     "content": self.SYSTEM_PROMPT
-                }] + self.memory
-            
+                }
+            ] + self.memory
 
-
-                        
-            response = self.bot.chat.completions.create(
-                messages = ai_p_message,
-                model="meta-llama/llama-4-scout-17b-16e-instruct"
+            response = self.groq.chat.completions.create(
+                messages=ai_messages,
+                model="llama-3.3-70b-versatile"
             )
+
             reply = response.choices[0].message.content
 
-            self.memory.append(
-                {
-                    "role": "assistant",
-                    "content": reply
-                })
-            
+            self.memory.append({
+                "role": "assistant",
+                "content": reply
+            })
+
             if len(self.memory) > 36:
                 self.memory.pop(0)
 
-
             await message.reply(reply)
-            
 
-            
+
+# Intents
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = bot(intents=intents)
-
+bot = Bot(intents=intents)
 bot.run(os.getenv("DISCORD_TOKEN"))
