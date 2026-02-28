@@ -9,7 +9,7 @@ load_dotenv(dotenv_path)
 
 class bot(discord.Client):
     async def on_ready(self):
-        self.bot = Groq(api_key=os.getenv("API_KEY"))
+        self.bot = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 
         self.SYSTEM_PROMPT = """
