@@ -7,8 +7,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import find_dotenv, load_dotenv
 from groq import Groq
-
-from discord import app_commands  # ✅ for slash commands
+from discord import app_commands
 
 # -------------------- KOYEB HEALTH CHECK SERVER --------------------
 
@@ -36,13 +35,10 @@ class Bot(discord.Client):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        # ✅ Slash command tree
         self.tree = app_commands.CommandTree(self)
 
-    # Level requirements:
-    # Level 1 at 5 msgs, then increases each level.
-    # Required messages for next level = 5 + (level * 3)
+    # Level 1 at 5 msgs, then increases:
+    # Next level requirement = 5 + (level * 3)
     def xp_needed_for_next_level(self, current_level: int) -> int:
         return 5 + (current_level * 3)
 
@@ -103,7 +99,6 @@ class Bot(discord.Client):
 
     # -------------------- SLASH COMMANDS --------------------
     async def setup_hook(self):
-        # /help slash command
         @self.tree.command(name="help", description="Show all PyKnight commands")
         async def help_cmd(interaction: discord.Interaction):
             embed = discord.Embed(
@@ -138,28 +133,16 @@ class Bot(discord.Client):
                 inline=False,
             )
 
-            embed.add_field(
-                name="🧠 Memory",
-                value=(
-                    "```fix\n"
-                    "I remember your recent chat (small memory).\n"
-                    "Restart = memory resets.\n"
-                    "```"
-                ),
-                inline=False,
-            )
-
             embed.set_footer(text="PyKnight • forged by Silence")
-
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # -------------------- YOUR ORIGINAL SETUP --------------------
+    # -------------------- READY --------------------
     async def on_ready(self):
         threading.Thread(target=run_health_server, daemon=True).start()
 
         self.groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-        # ✅ Your ID (Owner)
+        # ✅ Owner protection
         self.OWNER_ID = 1368566182264836157
         self.PROTECTED_IDS = {self.OWNER_ID}
 
@@ -196,15 +179,15 @@ Style:
 - No long paragraphs unless needed.
 """
 
-        # Level system cache
+        # Level cache
         self.levels = self._load_levels()
         self._last_save_time = time.time()
 
-        # Per-user memory (RAM only, small)
+        # User memory (RAM, small/medium)
         self.user_memories = {}
         self.USER_MEMORY_LIMIT = 16
 
-        # ✅ sync slash commands
+        # Slash sync
         try:
             await self.tree.sync()
             print("✅ Slash commands synced.")
@@ -213,9 +196,10 @@ Style:
 
         print(f"{self.user} is live now!")
 
+    # -------------------- LEVEL PROCESS --------------------
     async def _process_leveling(self, message: discord.Message):
         stats = self._get_user_stats(message.author.id)
-        stats["xp"] += 1
+        stats["xp"] += 1  # 1 message = 1 XP
 
         leveled_up = False
         old_level = stats["level"]
@@ -250,6 +234,7 @@ Style:
         items.sort(key=lambda x: (x[1], x[3]), reverse=True)
         return items[:limit]
 
+    # -------------------- MESSAGE HANDLER --------------------
     async def on_message(self, message: discord.Message):
         print(f"Message from {message.author}: {message.content}")
 
@@ -259,11 +244,11 @@ Style:
         content = (message.content or "").lower()
         is_owner = message.author.id in self.PROTECTED_IDS
 
-        # -------------------- LEVEL SYSTEM (RUNS ON EVERY MESSAGE) --------------------
+        # Level system on every message (guild only)
         if message.guild is not None:
             await self._process_leveling(message)
 
-        # -------------------- LEVEL COMMANDS --------------------
+        # -------------------- TEXT COMMANDS --------------------
         if content.startswith("!level") or content.startswith("!rank"):
             st = self._get_user_stats(message.author.id)
             lvl = st["level"]
@@ -295,10 +280,9 @@ Style:
                 await message.reply("🏆 **Top Aura / Levels**\n" + "\n".join(lines[:10]))
             return
 
-        # Detect if message mentions protected user(s)
+        # -------------------- ROAST PROTECTION --------------------
         mentions_protected = any(u.id in self.PROTECTED_IDS for u in message.mentions)
 
-        # 🚫 Block roasting protected users ONLY if the author is NOT owner
         if ("roast" in content) and mentions_protected and not is_owner:
             await message.reply("Nah. I don’t roast my creator. Pick someone else. 🗿")
             return
