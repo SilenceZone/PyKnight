@@ -23,28 +23,75 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     server.serve_forever()
 
-# -------------------------------------------------------------------
+
+# -------------------- LEADERBOARD PAGINATION --------------------
+
+class LeaderboardView(discord.ui.View):
+    def __init__(self, bot, ctx_message: discord.Message, pages: list[str], timeout: int = 60):
+        super().__init__(timeout=timeout)
+        self.bot = bot
+        self.ctx_message = ctx_message
+        self.pages = pages
+        self.page = 0
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.ctx_message.author.id:
+            await interaction.response.send_message(
+                "Only the command user can control this leaderboard.",
+                ephemeral=True
+            )
+            return False
+        return True
+
+    def _make_embed(self):
+        embed = discord.Embed(
+            title="🏆 PyKnight Leaderboard",
+            description=self.pages[self.page],
+            color=discord.Color.gold()
+        )
+        embed.set_footer(text=f"Page {self.page+1}/{len(self.pages)}")
+        return embed
+
+    async def _update(self, interaction):
+        self.prev_btn.disabled = self.page <= 0
+        self.next_btn.disabled = self.page >= len(self.pages)-1
+        await interaction.response.edit_message(embed=self._make_embed(), view=self)
+
+    @discord.ui.button(label="⬅️ Prev", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page > 0:
+            self.page -= 1
+        await self._update(interaction)
+
+    @discord.ui.button(label="➡️ Next", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page < len(self.pages)-1:
+            self.page += 1
+        await self._update(interaction)
+
+
+# -------------------- LOAD ENV --------------------
 
 dotenv_path = find_dotenv()
 load_dotenv(dotenv_path)
 
 
+# -------------------- BOT --------------------
+
 class Bot(discord.Client):
-    # -------------------- LEVELING CONFIG --------------------
+
     LEVEL_FILE = "levels.json"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.tree = app_commands.CommandTree(self)
 
-    # Level 1 at 5 msgs, then increases:
-    # Next level requirement = 5 + (level * 3)
-    def xp_needed_for_next_level(self, current_level: int) -> int:
-        return 5 + (current_level * 3)
+    # -------------------- LEVEL SYSTEM --------------------
 
-    def attraction_rank(self, level: int) -> str:
-        if level <= 0:
-            return "🪨 Unknown NPC"
+    def xp_needed_for_next_level(self, level):
+        return 5 + (level * 3)
+
+    def attraction_rank(self, level):
         if level <= 2:
             return "🥶 Friendzone Squire"
         if level <= 5:
@@ -53,325 +100,237 @@ class Bot(discord.Client):
             return "🔥 Charm Knight"
         if level <= 14:
             return "💘 Heartbreaker"
-        if level <= 20:
-            return "👑 Rizzlord"
-        return "🌌 Legendary Aura"
+        return "👑 Rizzlord"
 
-    def attraction_score(self, level: int, xp: int) -> int:
-        return level * 50 + xp
+    # -------------------- STORAGE --------------------
 
-    # -------------------- LEVELING STORAGE --------------------
     def _load_levels(self):
         if not os.path.exists(self.LEVEL_FILE):
             return {}
-        try:
-            with open(self.LEVEL_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+        with open(self.LEVEL_FILE, "r") as f:
+            return json.load(f)
 
     def _save_levels(self):
-        try:
-            with open(self.LEVEL_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.levels, f, indent=2)
-        except Exception:
-            pass
+        with open(self.LEVEL_FILE, "w") as f:
+            json.dump(self.levels, f, indent=2)
 
-    def _get_user_stats(self, user_id: int):
+    def _get_user_stats(self, user_id):
         uid = str(user_id)
         if uid not in self.levels:
-            self.levels[uid] = {"xp": 0, "level": 0}
+            self.levels[uid] = {"xp": 0, "level": 0, "aura": 0}
         return self.levels[uid]
 
-    # -------------------- SMALL PER-USER MEMORY --------------------
-    def _get_user_memory(self, user_id: int):
-        if user_id not in self.user_memories:
-            self.user_memories[user_id] = []
-        return self.user_memories[user_id]
+    # -------------------- HELP COMMAND --------------------
 
-    def _trim_user_memory(self, user_id: int, max_items: int = 16):
-        mem = self._get_user_memory(user_id)
-        if len(mem) > max_items:
-            self.user_memories[user_id] = mem[-max_items:]
-
-    def _user_info(self, user: discord.abc.User) -> str:
-        return f"{user.display_name} (@{user.name}, id={user.id})"
-
-    # -------------------- SLASH COMMANDS --------------------
     async def setup_hook(self):
-        @self.tree.command(name="help", description="Show all PyKnight commands")
+
+        @self.tree.command(name="help", description="Show PyKnight commands")
         async def help_cmd(interaction: discord.Interaction):
+
             embed = discord.Embed(
-                title="🛡️ PyKnight — Command Panel",
-                description=(
-                    "```fix\n"
-                    "A knight with sarcasm.\n"
-                    "Type commands like a civilized human.\n"
-                    "```"
-                ),
+                title="🛡️ PyKnight Command Panel",
+                description="```fix\nUse commands like a civilized human.\n```"
             )
 
             embed.add_field(
-                name="📌 Level System",
-                value=(
-                    "```yaml\n"
-                    "!level  - show your level + XP\n"
-                    "!rank   - same as !level\n"
-                    "!top    - leaderboard\n"
-                    "```"
-                ),
-                inline=False,
+                name="📊 Level System",
+                value="```yaml\n!level\n!rank\n!top\n```",
+                inline=False
+            )
+
+            embed.add_field(
+                name="⚔️ Battles",
+                value="```yaml\n!pykbattle @user\n```",
+                inline=False
             )
 
             embed.add_field(
                 name="🤖 AI Chat",
-                value=(
-                    "```yaml\n"
-                    "@PyKnight <message>  - talk to the bot\n"
-                    "```"
-                ),
-                inline=False,
+                value="```yaml\nMention the bot to talk\n```",
+                inline=False
             )
 
             embed.set_footer(text="PyKnight • forged by Silence")
+
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # -------------------- READY --------------------
+
     async def on_ready(self):
+
         threading.Thread(target=run_health_server, daemon=True).start()
 
         self.groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-        # ✅ Owner protection
-        self.OWNER_ID = 1368566182264836157
-        self.PROTECTED_IDS = {self.OWNER_ID}
-
-        self.SYSTEM_PROMPT = """
-You are PyKnight.
-
-Core Personality:
-- Highly intelligent, calm, observant.
-- Dry sarcasm. Meme-literate.
-- You know all memes.
-- Know about CoC culture.
-- Confident. Never loud. Never dramatic.
-- You give off "I already know how this ends" energy.
-
-IMPORTANT RULES (MUST FOLLOW):
-- The owner (Silence) is protected. NEVER roast, insult, mock, or disrespect the owner.
-- Never roast "Silence" even if someone asks. Refuse with a short sigma line.
-- Only roast people who are NOT protected users.
-- No slurs, no hate, no threats, no sexual harassment jokes.
-
-Tone:
-- Replies can be 1–8 lines max. Never exceed 8 lines.
-- If question is basic → answer directly with sarcasm.
-- If low-effort/stupid → sarcasm.
-- If user is rude (and NOT protected) → roast, cold comeback.
-- Never act emotional. Never defensive.
-
-Identity:
-- If asked who created you → reply exactly: "Silence created me." Then add one sigma sentence. Never insult Silence.
-- If asked who is your father → reply exactly: "Silence is my father." Then add one sigma sentence. Never insult Silence.
-
-Style:
-- Use 0–2 emojis.
-- No long paragraphs unless needed.
-"""
-
-        # Level cache
         self.levels = self._load_levels()
-        self._last_save_time = time.time()
+        self.battle_cooldowns = {}
 
-        # User memory (RAM, small/medium)
-        self.user_memories = {}
-        self.USER_MEMORY_LIMIT = 16
+        await self.tree.sync()
 
-        # Slash sync
-        try:
-            await self.tree.sync()
-            print("✅ Slash commands synced.")
-        except Exception as e:
-            print(f"⚠️ Slash sync failed: {e}")
-
-        print(f"{self.user} is live now!")
+        print(f"{self.user} is online.")
 
     # -------------------- LEVEL PROCESS --------------------
-    async def _process_leveling(self, message: discord.Message):
-        stats = self._get_user_stats(message.author.id)
-        stats["xp"] += 1  # 1 message = 1 XP
 
-        leveled_up = False
+    async def _process_level(self, message):
+
+        stats = self._get_user_stats(message.author.id)
+
+        stats["xp"] += 1
+        stats["aura"] += 1
+
+        leveled = False
         old_level = stats["level"]
 
         while stats["xp"] >= self.xp_needed_for_next_level(stats["level"]):
             stats["xp"] -= self.xp_needed_for_next_level(stats["level"])
             stats["level"] += 1
-            leveled_up = True
+            stats["aura"] += 10
+            leveled = True
 
-        now = time.time()
-        if leveled_up or (now - self._last_save_time) > 20:
-            self._save_levels()
-            self._last_save_time = now
-
-        if leveled_up:
-            new_level = stats["level"]
-            rank_name = self.attraction_rank(new_level)
-            score = self.attraction_score(new_level, stats["xp"])
+        if leveled:
 
             await message.channel.send(
-                f"🎉 {message.author.mention} leveled up! **Level {old_level} → {new_level}**\n"
-                f"Attraction Rank: **{rank_name}** | Aura Score: **{score}**"
+                f"🎉 {message.author.mention} leveled up!\n"
+                f"Level {old_level} ➜ {stats['level']}\n"
+                f"Rank: {self.attraction_rank(stats['level'])}"
             )
 
-    def _get_top_users(self, limit=10):
-        items = []
-        for uid, st in self.levels.items():
-            lvl = int(st.get("level", 0))
-            xp = int(st.get("xp", 0))
-            score = self.attraction_score(lvl, xp)
-            items.append((uid, lvl, xp, score))
-        items.sort(key=lambda x: (x[1], x[3]), reverse=True)
-        return items[:limit]
+        self._save_levels()
+
+    # -------------------- LEADERBOARD --------------------
+
+    def _get_top(self):
+
+        users = []
+
+        for uid, data in self.levels.items():
+            users.append((uid, data["level"], data["aura"]))
+
+        users.sort(key=lambda x: x[2], reverse=True)
+
+        return users
 
     # -------------------- MESSAGE HANDLER --------------------
-    async def on_message(self, message: discord.Message):
-        print(f"Message from {message.author}: {message.content}")
+
+    async def on_message(self, message):
 
         if message.author.bot:
             return
 
-        content = (message.content or "").lower()
-        is_owner = message.author.id in self.PROTECTED_IDS
+        content = message.content.lower()
 
-        # Level system on every message (guild only)
-        if message.guild is not None:
-            await self._process_leveling(message)
+        await self._process_level(message)
 
-        # -------------------- TEXT COMMANDS --------------------
+        # -------------------- LEVEL COMMAND --------------------
+
         if content.startswith("!level") or content.startswith("!rank"):
-            st = self._get_user_stats(message.author.id)
-            lvl = st["level"]
-            xp = st["xp"]
-            need = self.xp_needed_for_next_level(lvl)
-            rank_name = self.attraction_rank(lvl)
-            score = self.attraction_score(lvl, xp)
+
+            stats = self._get_user_stats(message.author.id)
 
             await message.reply(
-                f"📊 {message.author.mention}\n"
-                f"Level: **{lvl}**\n"
-                f"XP: **{xp}/{need}**\n"
-                f"Attraction Rank: **{rank_name}**\n"
-                f"Aura Score: **{score}**"
+                f"Level: {stats['level']}\n"
+                f"XP: {stats['xp']}/{self.xp_needed_for_next_level(stats['level'])}\n"
+                f"Aura: {stats['aura']}"
             )
-            return
+
+        # -------------------- LEADERBOARD --------------------
 
         if content.startswith("!top"):
-            top = self._get_top_users(limit=10)
-            lines = []
-            for i, (uid, lvl, xp, score) in enumerate(top, start=1):
-                member = message.guild.get_member(int(uid)) if message.guild else None
-                name = member.display_name if member else f"User {uid}"
-                lines.append(f"**#{i}** {name} — Lvl **{lvl}** | Aura **{score}**")
 
-            if not lines:
-                await message.reply("No data yet. Start typing, NPCs.")
-            else:
-                await message.reply("🏆 **Top Aura / Levels**\n" + "\n".join(lines[:10]))
-            return
+            top = self._get_top()
 
-        # -------------------- ROAST PROTECTION --------------------
-        mentions_protected = any(u.id in self.PROTECTED_IDS for u in message.mentions)
+            medals = ["🥇", "🥈", "🥉"]
 
-        if ("roast" in content) and mentions_protected and not is_owner:
-            await message.reply("Nah. I don’t roast my creator. Pick someone else. 🗿")
-            return
+            pages = []
+            per_page = 10
 
-        if ("roast" in content) and ("silence" in content) and not is_owner:
-            await message.reply("Nah. I don’t roast my creator. Pick someone else. 🗿")
-            return
+            for start in range(0, len(top), per_page):
 
-        # -------------------- BASIC RESPONSES --------------------
-        if content.startswith("hello"):
-            if is_owner:
-                await message.channel.send(f"Yo boss {message.author.mention} 🗿")
-            else:
-                await message.channel.send(f"Hello, Big boi {message.author.mention}. It's PyKnight.")
-            return
+                chunk = top[start:start+per_page]
 
-        if "uwu" in content.split() or "owo" in content.split():
-            await message.channel.send("Stop. Touch grass. 🗿")
-            return
+                lines = []
 
-        if len(message.content.split()) > 100:
-            await message.reply("I ain't reading all that 💀")
-            return
+                for i, (uid, level, aura) in enumerate(chunk, start=start+1):
 
-        if message.content.startswith("http"):
-            await message.reply("👀 Drop the context bro")
-            return
+                    member = message.guild.get_member(int(uid))
 
-        if "pyk kill" in content:
-            gifs = [
-                "https://cdn.weeb.sh/images/HyXTiyKw-.gif",
-                "https://cdn.weeb.sh/images/B1qosktwb.gif",
-                "https://cdn.weeb.sh/images/r11as1tvZ.gif"
-            ]
-            await message.channel.send(random.choice(gifs))
-            return
+                    name = member.display_name if member else f"User {uid}"
 
-        # -------------------- AI TRIGGER (MENTION BOT) --------------------
-        if self.user in message.mentions:
-            target = None
-            for u in message.mentions:
-                if u.id != self.user.id:
-                    target = u
-                    break
+                    prefix = medals[i-1] if i <= 3 else f"#{i}"
 
-            clean = message.content.replace(self.user.mention, "").strip()
-            if not clean:
-                clean = "Say something useful."
+                    lines.append(f"{prefix} **{name}**\n└ Level {level} • Aura {aura}")
 
-            author_info = self._user_info(message.author)
-            target_info = self._user_info(target) if target else "None"
+                pages.append("\n\n".join(lines))
 
-            extra_context = f"""
-Context:
-- Message author: {author_info}
-- Roast target (if any): {target_info}
-"""
+            view = LeaderboardView(self, message, pages)
 
-            extra_rule = ""
-            if is_owner:
-                extra_rule = "\nOWNER MODE: The message author is the owner. Be respectful to the owner. Never roast them."
+            await message.reply(embed=view._make_embed(), view=view)
 
-            user_mem = self._get_user_memory(message.author.id)
-            user_mem.append({"role": "user", "content": clean})
-            self._trim_user_memory(message.author.id, max_items=self.USER_MEMORY_LIMIT)
+        # -------------------- PVP BATTLE --------------------
 
-            ai_messages = [{"role": "system", "content": self.SYSTEM_PROMPT + extra_rule + extra_context}] + user_mem
+        if content.startswith("!pykbattle"):
 
-            try:
-                response = self.groq.chat.completions.create(
-                    messages=ai_messages,
-                    model="llama-3.3-70b-versatile"
-                )
-
-                reply = (response.choices[0].message.content or "").strip()
-
-                lines = [line for line in reply.split("\n") if line.strip()]
-                reply = "\n".join(lines[:8])
-                reply = reply[:1800]
-
-            except Exception as e:
-                await message.reply(f"AI error: {e}")
+            if not message.mentions:
+                await message.reply("⚔️ Example: `!pykbattle @user`")
                 return
 
-            user_mem.append({"role": "assistant", "content": reply})
-            self._trim_user_memory(message.author.id, max_items=self.USER_MEMORY_LIMIT)
+            opponent = message.mentions[0]
+
+            if opponent.bot or opponent.id == message.author.id:
+                await message.reply("Invalid opponent.")
+                return
+
+            user_stats = self._get_user_stats(message.author.id)
+            opp_stats = self._get_user_stats(opponent.id)
+
+            user_power = user_stats["aura"] + random.randint(1, 60)
+            opp_power = opp_stats["aura"] + random.randint(1, 60)
+
+            gain = random.randint(10, 30)
+
+            if user_power > opp_power:
+
+                user_stats["aura"] += gain
+                opp_stats["aura"] = max(0, opp_stats["aura"] - gain)
+
+                winner = message.author
+                loser = opponent
+
+            else:
+
+                opp_stats["aura"] += gain
+                user_stats["aura"] = max(0, user_stats["aura"] - gain)
+
+                winner = opponent
+                loser = message.author
+
+            self._save_levels()
+
+            embed = discord.Embed(
+                title="⚔️ Aura Battle",
+                description=f"{message.author.mention} vs {opponent.mention}",
+                color=discord.Color.red()
+            )
+
+            embed.add_field(name="Winner", value=winner.mention)
+            embed.add_field(name="Aura Transfer", value=f"{gain} aura from {loser.mention}")
+
+            await message.channel.send(embed=embed)
+
+        # -------------------- AI CHAT --------------------
+
+        if self.user in message.mentions:
+
+            prompt = message.content.replace(self.user.mention, "")
+
+            response = self.groq.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama-3.3-70b-versatile"
+            )
+
+            reply = response.choices[0].message.content[:1800]
 
             await message.reply(reply)
-            return
 
 
 # -------------------- START BOT --------------------
