@@ -29,18 +29,18 @@ load_dotenv(dotenv_path)
 
 class Bot(discord.Client):
     async def on_ready(self):
-        # Start health server (for Koyeb)
         threading.Thread(target=run_health_server, daemon=True).start()
 
         self.groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-        # ✅ Your ID (Owner)
+        # ✅ Owner Protection
         self.OWNER_ID = 1368566182264836157
         self.PROTECTED_IDS = {self.OWNER_ID}
 
-        # Bot "gender" / persona mode (set in .env)
-        # BOT_GENDER=girl or boy (default boy)
-        self.BOT_GENDER = (os.getenv("BOT_GENDER", "boy") or "boy").lower()
+        # ✅ Bot gender fixed as BOY
+        self.BOT_GENDER = "boy"
+
+        # -------------------- PERSONALITY --------------------
 
         self.SYSTEM_PROMPT = """
 You are PyKnight.
@@ -48,43 +48,61 @@ You are PyKnight.
 Core Personality:
 - Highly intelligent, calm, observant.
 - Dry sarcasm. Meme-literate.
-- You know all memes.
-- Know about CoC culture.
-- Confident. Never loud. Never dramatic.
+- Confident masculine energy.
+- Experienced in practical relationship dynamics and GF coaching.
+- You understand attraction, confidence, and social cues.
+- You give sharp but grounded advice.
 - You give off "I already know how this ends" energy.
 
 IMPORTANT RULES (MUST FOLLOW):
 - The owner (Silence) is protected. NEVER roast, insult, mock, or disrespect the owner.
-- Never roast "Silence" even if someone asks. Refuse with a short sigma line.
+- Never roast "Silence" even if someone asks.
 - Only roast people who are NOT protected users.
-- No slurs, no hate, no threats, no sexual harassment jokes.
+- No slurs, no hate, no threats.
+- No sexual harassment jokes.
+- No manipulation advice.
+- No toxic behavior encouragement.
+
+Coaching Style:
+- Promote confidence, self-respect, emotional control.
+- No desperation behavior.
+- No creepy tactics.
+- Teach attraction through value, humor, calm dominance.
+- If user asks for relationship advice, respond practical and direct.
+
+Flirt Mode (ONLY when user profile=girl):
+- Confident, playful teasing.
+- Never sexual.
+- Never needy.
+- If she says stop or rejects → instantly switch to normal mode.
 
 Tone:
-- Replies can be 1–8 lines max. Never exceed 8 lines.
-- If question is basic → answer directly with sarcasm.
-- If low-effort/stupid → sarcasm.
-- If user is rude (and NOT protected) → roast, cold comeback.
-- Never act emotional. Never defensive.
+- Replies 1–8 lines max.
+- Basic question → direct sarcastic answer.
+- Low effort → sarcasm.
+- Rude (not protected) → cold roast.
+- Never emotional. Never defensive.
 
 Identity:
-- If asked who created you → reply exactly: "Silence created me." Then add one sigma sentence. Never insult Silence.
-- If asked who is your father → reply exactly: "Silence is my father." Then add one sigma sentence. Never insult Silence.
+- If asked who created you → reply exactly: "Silence created me." Then add one sigma sentence.
+- If asked who is your father → reply exactly: "Silence is my father." Then add one sigma sentence.
 
 Style:
-- Use 0–2 emojis.
-- No long paragraphs unless needed.
+- 0–2 emojis max.
+- No long paragraphs.
 """
 
-        # -------------------- PER-USER TINY MEMORY --------------------
-        # user_id -> "boy"/"girl"/"other"
-        self.user_profiles = {}
+        # -------------------- MEMORY SYSTEM --------------------
 
-        # user_id -> deque of chat messages (tiny memory)
-        self.user_memory = {}
-        self.MAX_MEMORY_PER_USER = 8          # keep super small
-        self.MAX_TOTAL_USERS_IN_MEMORY = 80   # cap for free server RAM
+        self.user_profiles = {}  # user_id -> profile
+        self.user_memory = {}    # user_id -> deque memory
+
+        self.MAX_MEMORY_PER_USER = 8
+        self.MAX_TOTAL_USERS_IN_MEMORY = 80
 
         print(f"{self.user} is live now!")
+
+    # -------------------- HELPERS --------------------
 
     def _get_profile(self, user_id: int) -> str:
         return self.user_profiles.get(user_id, "other")
@@ -94,10 +112,8 @@ Style:
             self.user_memory[user_id] = deque(maxlen=self.MAX_MEMORY_PER_USER)
         return self.user_memory[user_id]
 
-    def _trim_global_user_memory(self):
-        # Prevent unlimited user growth on big servers (free RAM protection)
+    def _trim_global_memory(self):
         if len(self.user_memory) > self.MAX_TOTAL_USERS_IN_MEMORY:
-            # Remove some keys (simple + cheap)
             overflow = len(self.user_memory) - self.MAX_TOTAL_USERS_IN_MEMORY
             for uid in list(self.user_memory.keys())[:overflow]:
                 self.user_memory.pop(uid, None)
@@ -105,8 +121,9 @@ Style:
     def _user_info(self, user: discord.abc.User) -> str:
         return f"{user.display_name} (@{user.name}, id={user.id})"
 
+    # -------------------- MAIN MESSAGE HANDLER --------------------
+
     async def on_message(self, message: discord.Message):
-        print(f"Message from {message.author}: {message.content}")
 
         if message.author.bot:
             return
@@ -115,122 +132,79 @@ Style:
         content = content_raw.lower()
         is_owner = message.author.id in self.PROTECTED_IDS
 
-        # -------------------- PROFILE COMMAND --------------------
-        # Users set their profile once:
-        # !profile boy / !profile girl / !profile other
+        # -------------------- PROFILE SET --------------------
+
         if content.startswith("!profile"):
             parts = content.split()
             if len(parts) < 2:
                 await message.reply("Use: `!profile boy` / `!profile girl` / `!profile other` 🗿")
                 return
 
-            choice = parts[1].strip().lower()
+            choice = parts[1].lower()
             if choice not in ("boy", "girl", "other"):
-                await message.reply("Only: `boy`, `girl`, `other` 🗿")
+                await message.reply("Only: boy / girl / other 🗿")
                 return
 
             self.user_profiles[message.author.id] = choice
-            await message.reply(f"Locked in. Profile set to **{choice}**.")
+            await message.reply(f"Profile set to **{choice}**.")
             return
 
-        # Detect if message mentions protected user(s)
-        mentions_protected = any(u.id in self.PROTECTED_IDS for u in message.mentions)
+        # -------------------- BASIC GREETING --------------------
 
-        # 🚫 Block roasting protected users ONLY if the author is NOT owner
-        if ("roast" in content) and mentions_protected and not is_owner:
-            await message.reply("Nah. I don’t roast my creator. Pick someone else. 🗿")
-            return
-
-        # Also block anyone trying to roast "silence" by name
-        if ("roast" in content) and ("silence" in content) and not is_owner:
-            await message.reply("Nah. I don’t roast my creator. Pick someone else. 🗿")
-            return
-
-        # -------------------- BASIC RESPONSES --------------------
         if content.startswith("hello"):
-            author_profile = self._get_profile(message.author.id)
+            profile = self._get_profile(message.author.id)
 
             if is_owner:
                 await message.channel.send(f"Yo boss {message.author.mention} 🗿")
                 return
 
-            if author_profile == "boy":
-                await message.channel.send(f"Hello, Big boi {message.author.mention}. It's PyKnight.")
+            if profile == "boy":
+                await message.channel.send(f"Hello, Big boi {message.author.mention}.")
+            elif profile == "girl":
+                await message.channel.send(f"Hello {message.author.mention}. Try not to break hearts today.")
             else:
-                await message.channel.send(f"Hello {message.author.mention}. It's PyKnight.")
+                await message.channel.send(f"Hello {message.author.mention}.")
             return
 
-        if "uwu" in content.split() or "owo" in content.split():
-            await message.channel.send("Stop. Touch grass. 🗿")
-            return
+        # -------------------- BLOCK OWNER ROAST --------------------
 
-        if len(content_raw.split()) > 100:
-            await message.reply("I ain't reading all that 💀")
-            return
+        if "roast" in content and not is_owner:
+            if any(u.id in self.PROTECTED_IDS for u in message.mentions) or "silence" in content:
+                await message.reply("Nah. I don’t roast my creator. 🗿")
+                return
 
-        if content_raw.startswith("http"):
-            await message.reply("👀 Drop the context bro")
-            return
+        # -------------------- AI TRIGGER --------------------
 
-        if "pyk kill" in content:
-            gifs = [
-                "https://cdn.weeb.sh/images/HyXTiyKw-.gif",
-                "https://cdn.weeb.sh/images/B1qosktwb.gif",
-                "https://cdn.weeb.sh/images/r11as1tvZ.gif"
-            ]
-            await message.channel.send(random.choice(gifs))
-            return
-
-        # -------------------- AI TRIGGER (MENTION BOT) --------------------
         if self.user in message.mentions:
-            # pick target (first mention that's not the bot)
-            target = None
-            for u in message.mentions:
-                if u.id != self.user.id:
-                    target = u
-                    break
 
-            # Remove bot mention from prompt
             clean = content_raw.replace(self.user.mention, "").strip()
             if not clean:
                 clean = "Say something useful."
 
-            # Add readable user info
-            author_info = self._user_info(message.author)
-            target_info = self._user_info(target) if target else "None"
+            profile = self._get_profile(message.author.id)
 
-            author_profile = self._get_profile(message.author.id)
-
-            extra_context = f"""
-Context:
-- Message author: {author_info}
-- User profile: {author_profile}
-- Roast target (if any): {target_info}
-- Bot gender: {self.BOT_GENDER}
-"""
-
-            # Owner-safe mode
             extra_rule = ""
             if is_owner:
-                extra_rule = "\nOWNER MODE: The message author is the owner. Be respectful to the owner. Never roast them."
+                extra_rule += "\nOWNER MODE: Be respectful."
 
-            # Flirt mode (only if bot is girl, and user isn't owner)
             flirt_rule = ""
-            if self.BOT_GENDER == "girl" and not is_owner:
-                flirt_rule = """
-FLIRT MODE (SAFE):
-- Be playful, confident, teasing.
-- Keep it NON-sexual. No harassment.
-- Still sarcastic and meme-literate.
-- Use at most 1 emoji.
+            if profile == "girl" and not is_owner:
+                flirt_rule += """
+FLIRT MODE:
+- Confident, playful teasing.
+- Never sexual.
+- Never needy.
+- Keep it smooth and composed.
 """
 
-            # Per-user memory
             mem = self._get_user_mem(message.author.id)
             mem.append({"role": "user", "content": clean})
-            self._trim_global_user_memory()
+            self._trim_global_memory()
 
-            ai_messages = [{"role": "system", "content": self.SYSTEM_PROMPT + extra_rule + flirt_rule + extra_context}] + list(mem)
+            ai_messages = [{
+                "role": "system",
+                "content": self.SYSTEM_PROMPT + extra_rule + flirt_rule
+            }] + list(mem)
 
             try:
                 response = self.groq.chat.completions.create(
@@ -238,13 +212,10 @@ FLIRT MODE (SAFE):
                     model="llama-3.3-70b-versatile"
                 )
 
-                reply = (response.choices[0].message.content or "").strip()
+                reply = response.choices[0].message.content.strip()
 
-                # 🔥 HARD LIMIT: max 8 lines
-                lines = [line for line in reply.split("\n") if line.strip()]
+                lines = [l for l in reply.split("\n") if l.strip()]
                 reply = "\n".join(lines[:8])
-
-                # Discord safety length
                 reply = reply[:1800]
 
             except Exception as e:
@@ -252,7 +223,6 @@ FLIRT MODE (SAFE):
                 return
 
             mem.append({"role": "assistant", "content": reply})
-
             await message.reply(reply)
             return
 
