@@ -2,12 +2,9 @@ import discord
 import os
 import random
 import threading
-import json
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import find_dotenv, load_dotenv
 from groq import Groq
-from discord import app_commands
 
 # -------------------- KOYEB HEALTH CHECK SERVER --------------------
 
@@ -23,314 +20,176 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     server.serve_forever()
 
-
-# -------------------- LEADERBOARD PAGINATION --------------------
-
-class LeaderboardView(discord.ui.View):
-    def __init__(self, bot, ctx_message: discord.Message, pages: list[str], timeout: int = 60):
-        super().__init__(timeout=timeout)
-        self.bot = bot
-        self.ctx_message = ctx_message
-        self.pages = pages
-        self.page = 0
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.ctx_message.author.id:
-            await interaction.response.send_message(
-                "Only the command user can control this leaderboard.",
-                ephemeral=True
-            )
-            return False
-        return True
-
-    def _make_embed(self):
-        embed = discord.Embed(
-            title="🏆 PyKnight Leaderboard",
-            description=self.pages[self.page],
-            color=discord.Color.gold()
-        )
-        embed.set_footer(text=f"Page {self.page+1}/{len(self.pages)}")
-        return embed
-
-    async def _update(self, interaction):
-        self.prev_btn.disabled = self.page <= 0
-        self.next_btn.disabled = self.page >= len(self.pages)-1
-        await interaction.response.edit_message(embed=self._make_embed(), view=self)
-
-    @discord.ui.button(label="⬅️ Prev", style=discord.ButtonStyle.secondary)
-    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page > 0:
-            self.page -= 1
-        await self._update(interaction)
-
-    @discord.ui.button(label="➡️ Next", style=discord.ButtonStyle.secondary)
-    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page < len(self.pages)-1:
-            self.page += 1
-        await self._update(interaction)
-
-
-# -------------------- LOAD ENV --------------------
+# -------------------------------------------------------------------
 
 dotenv_path = find_dotenv()
 load_dotenv(dotenv_path)
 
 
-# -------------------- BOT --------------------
-
 class Bot(discord.Client):
-
-    LEVEL_FILE = "levels.json"
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.tree = app_commands.CommandTree(self)
-
-    # -------------------- LEVEL SYSTEM --------------------
-
-    def xp_needed_for_next_level(self, level):
-        return 5 + (level * 3)
-
-    def attraction_rank(self, level):
-        if level <= 2:
-            return "🥶 Friendzone Squire"
-        if level <= 5:
-            return "😏 Rizz Apprentice"
-        if level <= 9:
-            return "🔥 Charm Knight"
-        if level <= 14:
-            return "💘 Heartbreaker"
-        return "👑 Rizzlord"
-
-    # -------------------- STORAGE --------------------
-
-    def _load_levels(self):
-        if not os.path.exists(self.LEVEL_FILE):
-            return {}
-        with open(self.LEVEL_FILE, "r") as f:
-            return json.load(f)
-
-    def _save_levels(self):
-        with open(self.LEVEL_FILE, "w") as f:
-            json.dump(self.levels, f, indent=2)
-
-    def _get_user_stats(self, user_id):
-        uid = str(user_id)
-        if uid not in self.levels:
-            self.levels[uid] = {"xp": 0, "level": 0, "aura": 0}
-        return self.levels[uid]
-
-    # -------------------- HELP COMMAND --------------------
-
-    async def setup_hook(self):
-
-        @self.tree.command(name="help", description="Show PyKnight commands")
-        async def help_cmd(interaction: discord.Interaction):
-
-            embed = discord.Embed(
-                title="🛡️ PyKnight Command Panel",
-                description="```fix\nUse commands like a civilized human.\n```"
-            )
-
-            embed.add_field(
-                name="📊 Level System",
-                value="```yaml\n!level\n!rank\n!top\n```",
-                inline=False
-            )
-
-            embed.add_field(
-                name="⚔️ Battles",
-                value="```yaml\n!pykbattle @user\n```",
-                inline=False
-            )
-
-            embed.add_field(
-                name="🤖 AI Chat",
-                value="```yaml\nMention the bot to talk\n```",
-                inline=False
-            )
-
-            embed.set_footer(text="PyKnight • forged by Silence")
-
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # -------------------- READY --------------------
-
     async def on_ready(self):
-
         threading.Thread(target=run_health_server, daemon=True).start()
 
         self.groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-        self.levels = self._load_levels()
-        self.battle_cooldowns = {}
+        # ✅ Your ID (Owner)
+        self.OWNER_ID = 1368566182264836157
+        self.PROTECTED_IDS = {self.OWNER_ID}
 
-        await self.tree.sync()
+        self.SYSTEM_PROMPT = """
+You are PyKnight.
 
-        print(f"{self.user} is online.")
+Core Personality:
+- Highly intelligent, calm, observant.
+- Dry sarcasm. Meme-literate.
+- You know all memes.
+- Know about CoC culture.
+- Confident. Never loud. Never dramatic.
+- You give off "I already know how this ends" energy.
 
-    # -------------------- LEVEL PROCESS --------------------
+IMPORTANT RULES (MUST FOLLOW):
+- The owner (Silence) is protected. NEVER roast, insult, mock, or disrespect the owner.
+- Never roast "Silence" even if someone asks. Refuse with a short sigma line.
+- Only roast people who are NOT protected users.
+- No slurs, no hate, no threats, no sexual harassment jokes.
 
-    async def _process_level(self, message):
+Tone:
+- Replies can be 1–8 lines max. Never exceed 8 lines.
+- If question is basic → answer directly with sarcasm.
+- If low-effort/stupid → sarcasm.
+- If user is rude (and NOT protected) → roast, cold comeback.
+- Never act emotional. Never defensive.
 
-        stats = self._get_user_stats(message.author.id)
+Identity:
+- If asked who created you → reply exactly: "Silence created me." Then add one sigma sentence. Never insult Silence.
+- If asked who is your father → reply exactly: "Silence is my father." Then add one sigma sentence. Never insult Silence.
 
-        stats["xp"] += 1
-        stats["aura"] += 1
+Style:
+- Use 0–2 emojis.
+- No long paragraphs unless needed.
+"""
 
-        leveled = False
-        old_level = stats["level"]
+        self.memory = []
+        print(f"{self.user} is live now!")
 
-        while stats["xp"] >= self.xp_needed_for_next_level(stats["level"]):
-            stats["xp"] -= self.xp_needed_for_next_level(stats["level"])
-            stats["level"] += 1
-            stats["aura"] += 10
-            leveled = True
+    def _trim_memory(self, max_items=10):
+        if len(self.memory) > max_items:
+            self.memory = self.memory[-max_items:]
 
-        if leveled:
+    def _user_info(self, user: discord.abc.User) -> str:
+        # readable info for AI
+        return f"{user.display_name} (@{user.name}, id={user.id})"
 
-            await message.channel.send(
-                f"🎉 {message.author.mention} leveled up!\n"
-                f"Level {old_level} ➜ {stats['level']}\n"
-                f"Rank: {self.attraction_rank(stats['level'])}"
-            )
-
-        self._save_levels()
-
-    # -------------------- LEADERBOARD --------------------
-
-    def _get_top(self):
-
-        users = []
-
-        for uid, data in self.levels.items():
-            users.append((uid, data["level"], data["aura"]))
-
-        users.sort(key=lambda x: x[2], reverse=True)
-
-        return users
-
-    # -------------------- MESSAGE HANDLER --------------------
-
-    async def on_message(self, message):
+    async def on_message(self, message: discord.Message):
+        print(f"Message from {message.author}: {message.content}")
 
         if message.author.bot:
             return
 
-        content = message.content.lower()
+        content = (message.content or "").lower()
+        is_owner = message.author.id in self.PROTECTED_IDS
 
-        await self._process_level(message)
+        # Detect if message mentions protected user(s)
+        mentions_protected = any(u.id in self.PROTECTED_IDS for u in message.mentions)
 
-        # -------------------- LEVEL COMMAND --------------------
+        # 🚫 Block roasting protected users ONLY if the author is NOT owner
+        # ✅ Owner can roast others
+        if ("roast" in content) and mentions_protected and not is_owner:
+            await message.reply("Nah. I don’t roast my creator. Pick someone else. 🗿")
+            return
 
-        if content.startswith("!level") or content.startswith("!rank"):
+        # Also block anyone trying to roast "silence" by name (except owner if you want)
+        if ("roast" in content) and ("silence" in content) and not is_owner:
+            await message.reply("Nah. I don’t roast my creator. Pick someone else. 🗿")
+            return
 
-            stats = self._get_user_stats(message.author.id)
-
-            await message.reply(
-                f"Level: {stats['level']}\n"
-                f"XP: {stats['xp']}/{self.xp_needed_for_next_level(stats['level'])}\n"
-                f"Aura: {stats['aura']}"
-            )
-
-        # -------------------- LEADERBOARD --------------------
-
-        if content.startswith("!top"):
-
-            top = self._get_top()
-
-            medals = ["🥇", "🥈", "🥉"]
-
-            pages = []
-            per_page = 10
-
-            for start in range(0, len(top), per_page):
-
-                chunk = top[start:start+per_page]
-
-                lines = []
-
-                for i, (uid, level, aura) in enumerate(chunk, start=start+1):
-
-                    member = message.guild.get_member(int(uid))
-
-                    name = member.display_name if member else f"User {uid}"
-
-                    prefix = medals[i-1] if i <= 3 else f"#{i}"
-
-                    lines.append(f"{prefix} **{name}**\n└ Level {level} • Aura {aura}")
-
-                pages.append("\n\n".join(lines))
-
-            view = LeaderboardView(self, message, pages)
-
-            await message.reply(embed=view._make_embed(), view=view)
-
-        # -------------------- PVP BATTLE --------------------
-
-        if content.startswith("!pykbattle"):
-
-            if not message.mentions:
-                await message.reply("⚔️ Example: `!pykbattle @user`")
-                return
-
-            opponent = message.mentions[0]
-
-            if opponent.bot or opponent.id == message.author.id:
-                await message.reply("Invalid opponent.")
-                return
-
-            user_stats = self._get_user_stats(message.author.id)
-            opp_stats = self._get_user_stats(opponent.id)
-
-            user_power = user_stats["aura"] + random.randint(1, 60)
-            opp_power = opp_stats["aura"] + random.randint(1, 60)
-
-            gain = random.randint(10, 30)
-
-            if user_power > opp_power:
-
-                user_stats["aura"] += gain
-                opp_stats["aura"] = max(0, opp_stats["aura"] - gain)
-
-                winner = message.author
-                loser = opponent
-
+        # -------------------- BASIC RESPONSES --------------------
+        if content.startswith("hello"):
+            if is_owner:
+                await message.channel.send(f"Yo boss {message.author.mention} 🗿")
             else:
+                await message.channel.send(f"Hello, Big boi {message.author.mention}. It's PyKnight.")
+            return
 
-                opp_stats["aura"] += gain
-                user_stats["aura"] = max(0, user_stats["aura"] - gain)
+        if "uwu" in content.split() or "owo" in content.split():
+            await message.channel.send("Stop. Touch grass. 🗿")
+            return
 
-                winner = opponent
-                loser = message.author
+        if len(message.content.split()) > 100:
+            await message.reply("I ain't reading all that 💀")
+            return
 
-            self._save_levels()
+        if message.content.startswith("http"):
+            await message.reply("👀 Drop the context bro")
+            return
 
-            embed = discord.Embed(
-                title="⚔️ Aura Battle",
-                description=f"{message.author.mention} vs {opponent.mention}",
-                color=discord.Color.red()
-            )
+        if "pyk kill" in content:
+            gifs = [
+                "https://cdn.weeb.sh/images/HyXTiyKw-.gif",
+                "https://cdn.weeb.sh/images/B1qosktwb.gif",
+                "https://cdn.weeb.sh/images/r11as1tvZ.gif"
+            ]
+            await message.channel.send(random.choice(gifs))
+            return
 
-            embed.add_field(name="Winner", value=winner.mention)
-            embed.add_field(name="Aura Transfer", value=f"{gain} aura from {loser.mention}")
-
-            await message.channel.send(embed=embed)
-
-        # -------------------- AI CHAT --------------------
-
+        # -------------------- AI TRIGGER (MENTION BOT) --------------------
         if self.user in message.mentions:
+            # pick target (first mention that's not the bot)
+            target = None
+            for u in message.mentions:
+                if u.id != self.user.id:
+                    target = u
+                    break
 
-            prompt = message.content.replace(self.user.mention, "")
+            # Remove bot mention from prompt
+            clean = message.content.replace(self.user.mention, "").strip()
+            if not clean:
+                clean = "Say something useful."
 
-            response = self.groq.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model="llama-3.3-70b-versatile"
-            )
+            # Add readable user info
+            author_info = self._user_info(message.author)
+            target_info = self._user_info(target) if target else "None"
 
-            reply = response.choices[0].message.content[:1800]
+            extra_context = f"""
+Context:
+- Message author: {author_info}
+- Roast target (if any): {target_info}
+"""
+
+            # Owner-safe mode
+            extra_rule = ""
+            if is_owner:
+                extra_rule = "\nOWNER MODE: The message author is the owner. Be respectful to the owner. Never roast them."
+
+            self.memory.append({"role": "user", "content": clean})
+            self._trim_memory(max_items=10)
+
+            ai_messages = [{"role": "system", "content": self.SYSTEM_PROMPT + extra_rule + extra_context}] + self.memory
+
+            try:
+                response = self.groq.chat.completions.create(
+                    messages=ai_messages,
+                    model="llama-3.3-70b-versatile"
+                )
+
+                reply = (response.choices[0].message.content or "").strip()
+
+                # 🔥 HARD LIMIT: max 8 lines
+                lines = [line for line in reply.split("\n") if line.strip()]
+                reply = "\n".join(lines[:8])
+
+                # Discord safety
+                reply = reply[:1800]
+
+            except Exception as e:
+                await message.reply(f"AI error: {e}")
+                return
+
+            self.memory.append({"role": "assistant", "content": reply})
+            self._trim_memory(max_items=10)
 
             await message.reply(reply)
+            return
 
 
 # -------------------- START BOT --------------------
@@ -339,4 +198,4 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = Bot(intents=intents)
-bot.run(os.getenv("DISCORD_TOKEN"))
+bot.run(os.getenv("DISCORD_TOKEN")) 
