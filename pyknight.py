@@ -183,4 +183,4 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = Bot(intents=intents)
-bot.run(os.getenv("DISCORD_TOKEN"))
+bot.run(os.getenv("DISCORD_TOKEN"), reconnect=True)
