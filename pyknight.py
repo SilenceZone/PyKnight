@@ -16,7 +16,7 @@ def home() -> str:
 
 
 def run() -> None:
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=os.environ.get("PORT", 10000))
 
 
 def keep_alive() -> None:
