@@ -1,33 +1,27 @@
 import discord
 import os
 import random
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import find_dotenv, load_dotenv
+from flask import Flask
+from threading import Thread
 from groq import Groq
 
 # -------------------- RENDER HEALTH CHECK SERVER --------------------
 
-class HealthHandler(BaseHTTPRequestHandler):
+app = Flask(__name__) # Server
 
-    # stop console spam
-    def log_message(self, format, *args):
-        return
-
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+@app.route('/')
+def home() -> str:
+    return "Hello, I am alive!"
 
 
-def run_health_server():
-    port = int(os.getenv("PORT", 8000))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    server.serve_forever()
+def run() -> None:
+    app.run(host="0.0.0.0", port=10000)
 
 
-# start health server BEFORE bot connects
-threading.Thread(target=run_health_server, daemon=True).start()
+def keep_alive() -> None:
+    t = Thread(target=run, daemon=True)
+    t.start()
 
 # --------------------------------------------------------------------
 
@@ -183,4 +177,5 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = Bot(intents=intents)
+keep_alive()
 bot.run(os.getenv("DISCORD_TOKEN"), reconnect=True)
