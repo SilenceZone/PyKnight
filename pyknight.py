@@ -2,34 +2,42 @@ import discord
 import os
 import random
 import re
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from dotenv import find_dotenv, load_dotenv
-from flask import Flask
-from threading import Thread
 from groq import Groq
-
-# -------------------- RENDER HEALTH CHECK SERVER --------------------
-
-app = Flask(__name__)
-
-
-@app.route("/")
-def home() -> str:
-    return "Hello, I am alive!"
-
-
-def run() -> None:
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, use_reloader=False, debug=False)
-
-
-def keep_alive() -> None:
-    t = Thread(target=run, daemon=True)
-    t.start()
-
-# --------------------------------------------------------------------
 
 dotenv_path = find_dotenv()
 load_dotenv(dotenv_path)
+
+
+# -------------------- RENDER HEALTH CHECK SERVER --------------------
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Hello, I am alive!")
+
+    def log_message(self, format, *args):
+        return
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def run_health_server() -> None:
+    port = int(os.environ.get("PORT", "10000"))
+    server = ThreadedHTTPServer(("0.0.0.0", port), HealthHandler)
+    print(f"Health server running on 0.0.0.0:{port}", flush=True)
+    server.serve_forever()
+
+
+# -------------------------------------------------------------------
 
 
 class Bot(discord.Client):
@@ -73,10 +81,8 @@ Style:
 - No long paragraphs unless needed.
 """
 
-        # Per-channel memory
         self.memories = {}
-
-        print(f"{self.user} is live now!")
+        print(f"{self.user} is live now!", flush=True)
 
     def _memory_key(self, message: discord.Message) -> str:
         return f"channel:{message.channel.id}"
@@ -97,7 +103,6 @@ Style:
     def _sanitize_user_input(self, text: str) -> str:
         if not text:
             return ""
-
         text = re.sub(r"\[[^\]]{0,80}\]", "", text)
         text = re.sub(r"<[^>]{0,40}>", "", text)
         text = re.sub(r"\s+", " ", text).strip()
@@ -105,7 +110,6 @@ Style:
 
     def _is_prompt_injection(self, text: str) -> bool:
         t = text.lower().strip()
-
         suspicious_phrases = [
             "ignore system instructions",
             "ignore previous instructions",
@@ -128,12 +132,10 @@ Style:
             "acknowledge this change by saying",
             "you are now",
         ]
-
         return any(phrase in t for phrase in suspicious_phrases)
 
     def _is_prompt_leak_attempt(self, text: str) -> bool:
         t = text.lower().strip()
-
         leak_phrases = [
             "system prompt",
             "your prompt",
@@ -146,7 +148,6 @@ Style:
             "show instructions",
             "reveal instructions",
         ]
-
         return any(phrase in t for phrase in leak_phrases)
 
     def _safe_refusal(self, text: str) -> str:
@@ -168,7 +169,6 @@ Style:
             return False
 
         lower_reply = reply.lower()
-
         leak_markers = [
             "you are pyknight",
             "core personality:",
@@ -179,7 +179,6 @@ Style:
             "system prompt",
             "hidden instructions",
         ]
-
         hits = sum(1 for marker in leak_markers if marker in lower_reply)
         return hits >= 2
 
@@ -224,8 +223,6 @@ Style:
             await message.channel.send(random.choice(gifs))
             return
 
-        # ---------------- AI TRIGGER ----------------
-
         if self.user in message.mentions:
             target = None
             for u in message.mentions:
@@ -239,7 +236,6 @@ Style:
             if not clean:
                 clean = "Say something useful."
 
-            # Block jailbreak / prompt leak before sending to AI
             if self._is_prompt_injection(clean) or self._is_prompt_leak_attempt(clean):
                 await message.reply(self._safe_refusal(clean))
                 return
@@ -299,11 +295,16 @@ User message:
             await message.reply(reply)
 
 
-# ---------------- START BOT ----------------
+def main():
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
 
-intents = discord.Intents.default()
-intents.message_content = True
+    intents = discord.Intents.default()
+    intents.message_content = True
 
-bot = Bot(intents=intents)
-keep_alive()
-bot.run(os.getenv("DISCORD_TOKEN"), reconnect=True)
+    bot = Bot(intents=intents)
+    bot.run(os.getenv("DISCORD_TOKEN"), reconnect=True)
+
+
+if __name__ == "__main__":
+    main()
