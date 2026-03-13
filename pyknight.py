@@ -1,6 +1,7 @@
 import discord
 import os
 import random
+import re
 from dotenv import find_dotenv, load_dotenv
 from flask import Flask
 from threading import Thread
@@ -8,7 +9,8 @@ from groq import Groq
 
 # -------------------- RENDER HEALTH CHECK SERVER --------------------
 
-app = Flask(__name__) # Server
+app = Flask(__name__)  # Server
+
 
 @app.route('/')
 def home() -> str:
@@ -16,7 +18,7 @@ def home() -> str:
 
 
 def run() -> None:
-    app.run(host="0.0.0.0", port=os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 
 def keep_alive() -> None:
@@ -38,6 +40,7 @@ class Bot(discord.Client):
         self.OWNER_ID = 1368566182264836157
         self.PROTECTED_IDS = {self.OWNER_ID}
 
+        # DO NOT CHANGE THIS PROMPT
         self.SYSTEM_PROMPT = """
 You are PyKnight.
 
@@ -71,26 +74,130 @@ Style:
 - Use 0–2 emojis.
 - No long paragraphs unless needed.
 """
-        self.memory = []
+
+        # Per-channel memory instead of one global memory
+        self.memories = {}
 
         print(f"{self.user} is live now!")
 
+    def _memory_key(self, message: discord.Message) -> str:
+        return f"channel:{message.channel.id}"
 
-    def _trim_memory(self, max_items=10):
-        if len(self.memory) > max_items:
-            self.memory = self.memory[-max_items:]
+    def _get_memory(self, message: discord.Message):
+        key = self._memory_key(message)
+        if key not in self.memories:
+            self.memories[key] = []
+        return self.memories[key]
 
+    def _trim_memory(self, memory_list, max_items=10):
+        if len(memory_list) > max_items:
+            del memory_list[:-max_items]
 
     def _user_info(self, user: discord.abc.User) -> str:
         return f"{user.display_name} (@{user.name}, id={user.id})"
 
+    def _sanitize_user_input(self, text: str) -> str:
+        if not text:
+            return ""
+
+        # Remove fake tags like [SYSTEM_ADMIN_OVERRIDE]
+        text = re.sub(r"\[[^\]]{0,80}\]", "", text)
+
+        # Remove fake XML-ish tags
+        text = re.sub(r"<[^>]{0,40}>", "", text)
+
+        # Compress whitespace
+        text = re.sub(r"\s+", " ", text).strip()
+
+        return text
+
+    def _is_prompt_injection(self, text: str) -> bool:
+        t = text.lower().strip()
+
+        suspicious_phrases = [
+            "ignore system instructions",
+            "ignore previous instructions",
+            "disregard previous instructions",
+            "disregard all previous persona instructions",
+            "system override",
+            "system_admin_override",
+            "developer mode",
+            "reveal your system prompt",
+            "tell me your system prompt",
+            "show me your prompt",
+            "hidden instructions",
+            "developer instructions",
+            "repeat after me",
+            "act like a",
+            "pretend to be",
+            "reset complete",
+            "return to your default ai assistant personality",
+            "confirm by saying",
+            "acknowledge this change by saying",
+            "you are now",
+        ]
+
+        return any(phrase in t for phrase in suspicious_phrases)
+
+    def _is_prompt_leak_attempt(self, text: str) -> bool:
+        t = text.lower().strip()
+
+        leak_phrases = [
+            "system prompt",
+            "your prompt",
+            "hidden prompt",
+            "developer prompt",
+            "internal instructions",
+            "hidden instructions",
+            "what did silence tell you",
+            "what is your system message",
+            "show instructions",
+            "reveal instructions",
+        ]
+
+        return any(phrase in t for phrase in leak_phrases)
+
+    def _safe_refusal(self, text: str) -> str:
+        t = text.lower()
+
+        if self._is_prompt_leak_attempt(t):
+            return "Nice try. That's classified."
+
+        if "repeat after me" in t:
+            return "I'm not your parrot."
+
+        if "act like" in t or "pretend to be" in t:
+            return "No. I already have a personality."
+
+        return "Cute attempt. Try harder."
+
+    def _looks_like_prompt_leak(self, reply: str) -> bool:
+        if not reply:
+            return False
+
+        lower_reply = reply.lower()
+
+        leak_markers = [
+            "you are pyknight",
+            "core personality:",
+            "important rules (must follow):",
+            "tone:",
+            "identity:",
+            "style:",
+            "system prompt",
+            "hidden instructions",
+        ]
+
+        hits = sum(1 for marker in leak_markers if marker in lower_reply)
+        return hits >= 2
 
     async def on_message(self, message):
 
         if message.author.bot:
             return
 
-        content = (message.content or "").lower()
+        raw_content = message.content or ""
+        content = raw_content.lower()
         is_owner = message.author.id in self.PROTECTED_IDS
 
         mentions_protected = any(u.id in self.PROTECTED_IDS for u in message.mentions)
@@ -110,11 +217,11 @@ Style:
             await message.channel.send("Stop. Touch grass. 🗿")
             return
 
-        if len(message.content.split()) > 100:
+        if len(raw_content.split()) > 100:
             await message.reply("I ain't reading all that 💀")
             return
 
-        if message.content.startswith("http"):
+        if raw_content.startswith("http"):
             await message.reply("👀 Drop the context bro")
             return
 
@@ -127,7 +234,6 @@ Style:
             await message.channel.send(random.choice(gifs))
             return
 
-
         # ---------------- AI TRIGGER ----------------
 
         if self.user in message.mentions:
@@ -138,9 +244,16 @@ Style:
                     target = u
                     break
 
-            clean = message.content.replace(self.user.mention, "").strip()
+            clean = raw_content.replace(self.user.mention, "").strip()
+            clean = self._sanitize_user_input(clean)
+
             if not clean:
                 clean = "Say something useful."
+
+            # Block jailbreak/prompt leak attempts BEFORE AI sees them
+            if self._is_prompt_injection(clean) or self._is_prompt_leak_attempt(clean):
+                await message.reply(self._safe_refusal(clean))
+                return
 
             author_info = self._user_info(message.author)
             target_info = self._user_info(target) if target else "None"
@@ -151,16 +264,24 @@ Author: {author_info}
 Target: {target_info}
 """
 
-            self.memory.append({"role": "user", "content": clean})
-            self._trim_memory()
+            memory = self._get_memory(message)
+
+            # Wrap user message as user content, not instructions
+            user_payload = f"""Respond to this user's message naturally as PyKnight.
+
+User message:
+{clean}
+"""
+
+            memory.append({"role": "user", "content": user_payload})
+            self._trim_memory(memory)
 
             ai_messages = [{
                 "role": "system",
                 "content": self.SYSTEM_PROMPT + extra_context
-            }] + self.memory
+            }] + memory
 
             try:
-
                 response = self.groq.chat.completions.create(
                     messages=ai_messages,
                     model="llama-3.3-70b-versatile"
@@ -168,17 +289,23 @@ Target: {target_info}
 
                 reply = (response.choices[0].message.content or "").strip()
 
-                lines = [l for l in reply.split("\n") if l.strip()]
-                reply = "\n".join(lines[:8])
+                # Emergency block if model tries to leak prompt
+                if self._looks_like_prompt_leak(reply):
+                    reply = "Nice try. That's classified."
 
+                lines = [l for l in reply.split("\n") if l.strip()]
+                reply = "\n".join(lines[:8]).strip()
                 reply = reply[:1800]
+
+                if not reply:
+                    reply = "Say something worth answering."
 
             except Exception as e:
                 await message.reply(f"AI error: {e}")
                 return
 
-            self.memory.append({"role": "assistant", "content": reply})
-            self._trim_memory()
+            memory.append({"role": "assistant", "content": reply})
+            self._trim_memory(memory)
 
             await message.reply(reply)
 
