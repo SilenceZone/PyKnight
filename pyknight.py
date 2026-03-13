@@ -9,16 +9,17 @@ from groq import Groq
 
 # -------------------- RENDER HEALTH CHECK SERVER --------------------
 
-app = Flask(__name__)  # Server
+app = Flask(__name__)
 
 
-@app.route('/')
+@app.route("/")
 def home() -> str:
     return "Hello, I am alive!"
 
 
 def run() -> None:
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, use_reloader=False, debug=False)
 
 
 def keep_alive() -> None:
@@ -32,15 +33,12 @@ load_dotenv(dotenv_path)
 
 
 class Bot(discord.Client):
-
     async def on_ready(self):
-
         self.groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
         self.OWNER_ID = 1368566182264836157
         self.PROTECTED_IDS = {self.OWNER_ID}
 
-        # DO NOT CHANGE THIS PROMPT
         self.SYSTEM_PROMPT = """
 You are PyKnight.
 
@@ -75,7 +73,7 @@ Style:
 - No long paragraphs unless needed.
 """
 
-        # Per-channel memory instead of one global memory
+        # Per-channel memory
         self.memories = {}
 
         print(f"{self.user} is live now!")
@@ -100,15 +98,9 @@ Style:
         if not text:
             return ""
 
-        # Remove fake tags like [SYSTEM_ADMIN_OVERRIDE]
         text = re.sub(r"\[[^\]]{0,80}\]", "", text)
-
-        # Remove fake XML-ish tags
         text = re.sub(r"<[^>]{0,40}>", "", text)
-
-        # Compress whitespace
         text = re.sub(r"\s+", " ", text).strip()
-
         return text
 
     def _is_prompt_injection(self, text: str) -> bool:
@@ -191,15 +183,13 @@ Style:
         hits = sum(1 for marker in leak_markers if marker in lower_reply)
         return hits >= 2
 
-    async def on_message(self, message):
-
+    async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
 
         raw_content = message.content or ""
         content = raw_content.lower()
         is_owner = message.author.id in self.PROTECTED_IDS
-
         mentions_protected = any(u.id in self.PROTECTED_IDS for u in message.mentions)
 
         if ("roast" in content) and mentions_protected and not is_owner:
@@ -237,7 +227,6 @@ Style:
         # ---------------- AI TRIGGER ----------------
 
         if self.user in message.mentions:
-
             target = None
             for u in message.mentions:
                 if u.id != self.user.id:
@@ -250,7 +239,7 @@ Style:
             if not clean:
                 clean = "Say something useful."
 
-            # Block jailbreak/prompt leak attempts BEFORE AI sees them
+            # Block jailbreak / prompt leak before sending to AI
             if self._is_prompt_injection(clean) or self._is_prompt_leak_attempt(clean):
                 await message.reply(self._safe_refusal(clean))
                 return
@@ -266,7 +255,6 @@ Target: {target_info}
 
             memory = self._get_memory(message)
 
-            # Wrap user message as user content, not instructions
             user_payload = f"""Respond to this user's message naturally as PyKnight.
 
 User message:
@@ -276,10 +264,12 @@ User message:
             memory.append({"role": "user", "content": user_payload})
             self._trim_memory(memory)
 
-            ai_messages = [{
-                "role": "system",
-                "content": self.SYSTEM_PROMPT + extra_context
-            }] + memory
+            ai_messages = [
+                {
+                    "role": "system",
+                    "content": self.SYSTEM_PROMPT + extra_context
+                }
+            ] + memory
 
             try:
                 response = self.groq.chat.completions.create(
@@ -289,7 +279,6 @@ User message:
 
                 reply = (response.choices[0].message.content or "").strip()
 
-                # Emergency block if model tries to leak prompt
                 if self._looks_like_prompt_leak(reply):
                     reply = "Nice try. That's classified."
 
